@@ -47,6 +47,24 @@
   #langRow { display: flex; gap: 4px; align-items: center; }
   #langRow span { padding: 0 4px; }
   #menu #langRow button { width: auto; flex: 1; text-align: center; }
+  #workspaceBar { display:flex; align-items:center; gap:6px; padding:6px 10px; background:#0b0f14; border-bottom:1px solid #21262d; overflow-x:auto; flex-shrink:0; }
+  .ws-tab { display:flex; align-items:center; gap:7px; min-width:120px; max-width:220px; padding:6px 8px 6px 11px; color:#8b949e; background:#161b22; border-color:#21262d; }
+  .ws-tab.active { color:#fff; background:#21262d; border-color:#e3350d; box-shadow:inset 0 -2px #e3350d; }
+  .ws-tab .ws-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ws-tab .ws-online { margin-left:auto; font-size:10px; color:#3fb950; }
+  .ws-tab .ws-proxy { font-size:11px; color:#79c0ff; }
+  .ws-tab .ws-gear { padding:1px 4px; border:0; background:transparent; color:#8b949e; font-size:13px; }
+  #wsAdd { padding:5px 10px; flex:none; }
+  .panel.tab-hidden { display:none !important; }
+  #proxyOverlay { position:fixed; inset:0; z-index:210; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.68); }
+  #proxyOverlay.show { display:flex; }
+  #proxyModal { width:480px; max-width:92vw; padding:18px 20px; background:#161b22; border:1px solid #30363d; border-radius:10px; box-shadow:0 18px 60px rgba(0,0,0,.55); }
+  #proxyModal h2 { margin:0 0 5px; font-size:15px; }
+  #proxyModal .hint { color:#8b949e; font-size:11px; line-height:1.5; margin-bottom:14px; }
+  .proxy-fields { display:grid; gap:8px; }
+  .proxy-fields input { width:100%; padding:8px 10px; color:#e6edf3; background:#0d1117; border:1px solid #30363d; border-radius:6px; }
+  .proxy-auth { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  #proxyResult { min-height:20px; margin-top:10px; font-size:11px; color:#8b949e; }
 
   #grid {
     flex: 1; display: grid; gap: 6px; padding: 6px;
@@ -490,6 +508,7 @@
     </div>
     <button id="refBtn" title="Referral do criador, copie se quiser ajudar :)">🔗</button>
   </div>
+  <div id="workspaceBar"></div>
   <div id="grid"></div>
   <div id="cards"></div>
 
@@ -536,6 +555,19 @@
         <button id="scDialogNo">Não</button>
         <button id="scDialogYes" class="primary">Sim</button>
       </div>
+    </div>
+  </div>
+  <div id="proxyOverlay">
+    <div id="proxyModal">
+      <h2>⚙ Configurações da aba</h2>
+      <p class="hint">As quatro contas desta aba usam a mesma saída de rede, mas continuam com logins separados. Deixe o proxy vazio para usar sua conexão normal.</p>
+      <div class="proxy-fields">
+        <input id="wsName" placeholder="Nome da aba">
+        <input id="proxyUrl" placeholder="Proxy — exemplo: http://127.0.0.1:8080">
+        <div class="proxy-auth"><input id="proxyUser" placeholder="Usuário (opcional)"><input id="proxyPass" type="password" placeholder="Senha (opcional)"></div>
+      </div>
+      <div id="proxyResult"></div>
+      <div class="modal-actions"><button id="proxyCancel">Cancelar</button><button id="proxyTest">Testar IP</button><button id="proxySave" class="primary">Salvar e aplicar</button></div>
     </div>
   </div>
 
@@ -593,11 +625,20 @@ const HOME_URL  = 'https://poke.idleworld.online/?ref=CJNKGPB'; // link do refer
 
   let accounts = [];
   const webviews = [];
-  const off = [false, false, false, false];
-  const lastLogin = [0, 0, 0, 0]; // cooldown do auto-login por painel (evita ressubmeter em loop)
-  const alertedBalls = [false, false, false, false]; // ja avisou "sem pokebola" nesta falta?
-  let count = Math.min(4, Math.max(1, +lsGet('count') || 4)); // quantos paineis rodar (1 a 4)
-  let muted = lsGet('muted') === '1';
+  const off = [], lastLogin = [], alertedBalls = [];
+  const PER_TAB = 4;
+  let workspaces = lsArr('workspaces').filter(x => x && /^tab[\w-]{0,40}$/.test(x.id)).slice(0, 4);
+  if (!workspaces.length) workspaces = [{ id:'tab1', name:'Aba 1', eco:lsGet('eco') !== '0', simple:false }];
+  workspaces = workspaces.map((x, i) => ({ id:x.id || ('tab' + (i + 1)), name:String(x.name || ('Aba ' + (i + 1))).slice(0, 30), eco:x.eco !== false, simple:!!x.simple, muted:x.muted != null ? !!x.muted : lsGet('muted') === '1', layout:['grid','col','row'].includes(x.layout) ? x.layout : (lsGet('layout') || 'grid'), chatHidden:x.chatHidden != null ? !!x.chatHidden : lsGet('chatHidden') !== '0', dockHidden:x.dockHidden != null ? !!x.dockHidden : lsGet('dockHidden') === '1', clean:x.clean != null ? !!x.clean : lsGet('cleanHud') !== '0', alerts:x.alerts != null ? !!x.alerts : lsGet('alerts') !== '0', sellGuard:x.sellGuard != null ? !!x.sellGuard : lsGet('sellguard') !== '0' }));
+  let activeTab = Math.max(0, Math.min(workspaces.length - 1, +lsGet('activeWorkspace') || 0));
+  let count = PER_TAB;
+  let proxyConfigs = {};
+  const tabStart = () => activeTab * PER_TAB;
+  const activeRange = () => Array.from({ length: PER_TAB }, (_, n) => tabStart() + n);
+  const tabOf = i => workspaces[Math.floor(i / PER_TAB)] || workspaces[0];
+  const partitionOf = i => { const ti = Math.floor(i / PER_TAB), slot = i % PER_TAB; return ti === 0 ? 'persist:conta' + (slot + 1) : 'persist:' + workspaces[ti].id + '-conta' + (slot + 1); };
+  const saveWorkspaces = () => { lsSet('workspaces', JSON.stringify(workspaces)); lsSet('activeWorkspace', activeTab); };
+  let muted = !!workspaces[activeTab].muted;
 
   // ----- Idioma (interface + jogo) -----
   const I18N = {
@@ -721,18 +762,19 @@ const HOME_URL  = 'https://poke.idleworld.online/?ref=CJNKGPB'; // link do refer
   };
   let lang = ['en', 'es'].includes(lsGet('lang')) ? lsGet('lang') : 'pt';
   const t = (k) => (I18N[lang][k] != null ? I18N[lang][k] : I18N.pt[k]);
-  const defName = (i) => t('trainer') + ' ' + (i + 1);
+  const defName = (i) => t('trainer') + ' ' + ((i % PER_TAB) + 1);
 
   const blank = () => ({ name: '', email: '', senha: '' });
   function normalize(arr) {
     const out = [];
-    for (let i = 0; i < 4; i++) out.push(Object.assign(blank(), arr && arr[i]));
+    for (let i = 0; i < workspaces.length * PER_TAB; i++) out.push(Object.assign(blank(), arr && arr[i]));
     return out;
   }
 
   function criarPainel(i) {
       const panel = document.createElement('div');
       panel.className = 'panel';
+      panel.dataset.tab = Math.floor(i / PER_TAB);
       panel.innerHTML = `
         <div class="panel-header">
           <span class="dot"></span>
@@ -745,7 +787,7 @@ const HOME_URL  = 'https://poke.idleworld.online/?ref=CJNKGPB'; // link do refer
           <button class="expand">⛶</button>
         </div>`;
       const wv = document.createElement('webview');
-      wv.partition = 'persist:conta' + (i + 1);
+      wv.partition = partitionOf(i);
       wv.src = START_URL;
       panel.appendChild(wv);
       grid.appendChild(panel);
@@ -756,7 +798,7 @@ const HOME_URL  = 'https://poke.idleworld.online/?ref=CJNKGPB'; // link do refer
       const nameEl = panel.querySelector('.name');
       nameEl.textContent = accounts[i].name || defName(i);
 
-      dot.style.background = dot.style.color = ACOR[i] || '#8b949e'; // cor da conta (o color alimenta o brilho quando online)
+      dot.style.background = dot.style.color = ACOR[i % PER_TAB] || '#8b949e'; // cor da conta (o color alimenta o brilho quando online)
       let falhou = false; // ultima carga falhou? (evita o did-stop-loading apagar o estado de erro)
       wv.addEventListener('did-start-loading', () => { if (!off[i]) { falhou = false; dot.className = 'dot'; status.textContent = t('stLoading'); } });
       // o did-stop-loading sempre fecha o par do did-start-loading. Sem ele, navegacao interna da
@@ -790,7 +832,7 @@ const HOME_URL  = 'https://poke.idleworld.online/?ref=CJNKGPB'; // link do refer
       wv.addEventListener('dom-ready', () => {
         if (!off[i]) { dot.className = 'dot ok'; status.textContent = t('stOnline'); fails = 0; alertedDown = false; } // carregou: zera o watchdog
         try {
-          wv.setAudioMuted(muted || cardsOn); wv.setZoomFactor(zoom);
+          wv.setAudioMuted(tabOf(i).muted || tabOf(i).simple); wv.setZoomFactor(zoom);
           // reload nao zera a sessao: o jogo continua no servidor, entao re-semeia os contadores de antes
           try {
             const sn = sessSnap[i];
@@ -805,18 +847,18 @@ const HOME_URL  = 'https://poke.idleworld.online/?ref=CJNKGPB'; // link do refer
    E estimativa, nao extrato. Upgrade: rastrear pelo evento de uso do item, se o jogo expor um. */
 if(S.supBase){for(const id in S.supBase){const antes=S.supBase[id]||0,agora=(cur[id]!=null?cur[id]:0),d=antes-agora;if(d>0){const it=cat0[id]||{};S.supGold=(S.supGold||0)+d*(it.priceGold||it.npcPrice||0);S.supN=(S.supN||0)+d;}}}
 S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const doc=P.api['/game/items.json'];const it=doc&&doc.items&&doc.items.find(x=>x.id===59195);const d=S.drops[59195]||(S.drops[59195]={name:(it&&it.name)||'Rare Pokémon Picture',qty:0});d.qty+=(now-S.picBase);}S.picBase=now;}}else if(m.type==='chat'||m.type==='history'){const chS=(mm)=>{try{if(!mm||!mm.body)return;const re=/\\[poke!([A-Za-z0-9_-]+)\\]/g;let mt;while((mt=re.exec(mm.body))){try{const j=JSON.parse(atob(mt[1].replace(/-/g,'+').replace(/_/g,'/')));if(j&&j.k==='poke'){const CS=P.chatShares=P.chatShares||[];const N=(v)=>{v=Number(v);return isFinite(v)?v:0;};const cn=String(j.n||'?').slice(0,40),cf=String(mm.fromName||'').slice(0,40);if(!CS.some(c=>c.n===cn&&c.iv===N(j.iv)&&c.lv===N(j.lv)&&c.fr===cf)){CS.push({fr:cf,n:cn,sh:!!j.sh,lv:N(j.lv),q:N(j.q),iv:N(j.iv),pw:N(j.pw),t:Date.now()});if(CS.length>15)CS.shift();}}}catch(x){}}}catch(x){}};if(m.type==='chat')chS(m.msg);else['world','trade','help'].forEach(c2=>(m[c2]||[]).forEach(chS));}}}}catch(x){}});return s;};window.WebSocket.prototype=OW.prototype;['CONNECTING','OPEN','CLOSING','CLOSED'].forEach(k=>{try{window.WebSocket[k]=OW[k]}catch(x){}});const OF=window.fetch;window.fetch=function(...a){try{let H;const r0=a[0],ini=a[1];if(ini&&ini.headers)H=ini.headers;else if(r0&&typeof r0==='object'&&r0.headers)H=r0.headers;if(H){let au;if(typeof H.get==='function')au=H.get('authorization');else au=H.Authorization||H.authorization;if(au)auth=au;}}catch(x){}const p=OF.apply(this,a);try{let u=(a[0]&&a[0].url)||a[0];if(typeof u==='string'&&/\\/api\\/|items\\.json/.test(u)){p.then(r=>{const c=r.clone();c.json().then(j=>{const key=u.split('?')[0];if(key==='/api/game/used-balls'){if(j&&j.pokemons){P.shinyEnc=j.pokemons.reduce((s,p)=>s+(p.shiny?(p.attempts||0):0),0);P.usedList=j.pokemons.map(p=>({sid:p.speciesId,name:p.name,shiny:!!p.shiny,attempts:p.attempts||0,total:p.total||0,caught:!!p.caught}));}return;}if(key==='/api/characters/me'&&(!j||!j.character))return;P.api[key]=j}).catch(()=>{})}).catch(()=>{})}}catch(x){}return p;};const poll=()=>{try{const o=auth?{headers:{Authorization:auth}}:undefined;fetch('/api/characters/me',o).catch(()=>{});fetch('/api/game/used-balls',o).catch(()=>{});try{if(P.sock&&P.sock.readyState===1)P.sock.send(JSON.stringify({type:'inv-get'}));}catch(x){}}catch(x){}};setInterval(poll,30000);setTimeout(poll,9000);})()`).catch(() => {}); // coletor de estado + sessao (refetch autenticado de gold/nivel a cada 30s)
-          wv.executeJavaScript(ecoScript(ecoFps())).catch(() => {});
+          wv.executeJavaScript(ecoScript(ecoFps(i))).catch(() => {});
           wv.executeJavaScript(PUSH_STATE()).catch(() => {}); // painel Simples le daqui sem perguntar
           // jogo congelado com pagina viva: WebGL perdeu o contexto e nao restaurou em 4s -> recarrega
           wv.executeJavaScript("(()=>{if(window.__pgGlWd)return;window.__pgGlWd=1;let tm;document.addEventListener('webglcontextlost',()=>{clearTimeout(tm);tm=setTimeout(()=>location.reload(),4000);},true);document.addEventListener('webglcontextrestored',()=>clearTimeout(tm),true);})()").catch(() => {});
-          if (cardsOn) wv.executeJavaScript(ultraScript(true)).catch(() => {}); // reaplica o ultra apos reload/relogin
+          if (tabOf(i).simple) wv.executeJavaScript(ultraScript(true)).catch(() => {}); // reaplica o ultra apos reload/relogin
           wv.executeJavaScript(POPUP_SCRIPT).catch(() => {});
-          wv.executeJavaScript(cleanScript(cleanOn)).catch(() => {});
+          wv.executeJavaScript(cleanScript(!!tabOf(i).clean)).catch(() => {});
           wv.executeJavaScript(SELLGUARD).catch(() => {});
-          wv.executeJavaScript('window.__pgSellGuardOn=' + (sellGuardOn ? 'true' : 'false') + ';window.__pgSellLock=' + JSON.stringify(sellLock)).catch(() => {});
+          wv.executeJavaScript('window.__pgSellGuardOn=' + (tabOf(i).sellGuard ? 'true' : 'false') + ';window.__pgSellLock=' + JSON.stringify(sellLock)).catch(() => {});
           wv.executeJavaScript(QOL_UI).catch(() => {});
-          wv.executeJavaScript(chatScript(chatHidden || cardsOn)).catch(() => {});
-          wv.executeJavaScript(dockScript(dockHidden)).catch(() => {});
+          wv.executeJavaScript(chatScript(!!tabOf(i).chatHidden || tabOf(i).simple)).catch(() => {});
+          wv.executeJavaScript(dockScript(!!tabOf(i).dockHidden)).catch(() => {});
           // so na tela de login, pra nao rodar a toa dentro do jogo
           if ((wv.getURL() || '').startsWith(LOGIN_URL)) wv.executeJavaScript(scrollLoginScript).catch(() => {});
           wv.executeJavaScript(`localStorage.setItem('poke_lang', ${JSON.stringify(lang === 'pt' ? 'pt' : 'en')})`).catch(() => {}); // mantem o jogo no idioma escolhido (es usa en, o jogo so tem pt/en)
@@ -848,31 +890,68 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
       };
   }
 
-  // ----- Numero de paineis (2 a 4), escolhido no menu -----
+  // ----- Abas de trabalho: quatro contas por aba -----
   const countBtn = document.getElementById('count');
   function aplicaCountLayout() {
     grid.classList.remove('count-1', 'count-2', 'count-3', 'count-4');
-    grid.classList.add('count-' + count);
-    countBtn.textContent = t('count') + ': ' + count;
-    lsSet('count', count);
+    grid.classList.add('count-4');
+    countBtn.style.display = 'none';
   }
-  function build() { for (let i = 0; i < count; i++) criarPainel(i); aplicaCountLayout(); }
-  function setCount(n) {
-    n = Math.min(4, Math.max(1, n));
-    const atual = webviews.length;
-    count = n;
-    if (n < atual) { // remove os paineis do fim (remover do DOM ja destroi o webview)
-      for (let i = atual - 1; i >= n; i--) {
-        if (grid.children[i]) grid.children[i].remove();
-        webviews.pop();
-      }
-    } else if (n > atual) { // adiciona sem recarregar os existentes
-      for (let i = atual; i < n; i++) { off[i] = false; lastLogin[i] = 0; alertedBalls[i] = false; criarPainel(i); }
-    }
-    aplicaCountLayout();
-    ajustaProporcao(); // painel novo/removido muda o espaco de cada um
+  function build() {
+    for (let i = 0; i < workspaces.length * PER_TAB; i++) { off[i] = false; lastLogin[i] = 0; alertedBalls[i] = false; criarPainel(i); }
+    aplicaCountLayout(); renderWorkspaceTabs(); showActiveWorkspace();
   }
-  countBtn.onclick = () => setCount(count === 4 ? 1 : count + 1); // cicla 4 -> 1 -> 2 -> 3 -> 4
+  countBtn.onclick = null;
+
+  const workspaceBar = document.getElementById('workspaceBar');
+  function renderWorkspaceTabs() {
+    workspaceBar.innerHTML = workspaces.map((ws, ti) => {
+      let online = 0; for (let i = ti * PER_TAB; i < ti * PER_TAB + PER_TAB; i++) if (stCache[i] && Date.now() - stCache[i].t < 30000) online++;
+      return '<button class="ws-tab' + (ti === activeTab ? ' active' : '') + '" data-ws="' + ti + '"><span class="ws-name">' + escH(ws.name) + '</span>' + (proxyConfigs[ws.id] && proxyConfigs[ws.id].url ? '<span class="ws-proxy" title="Proxy configurado">🌐</span>' : '') + '<span class="ws-online">' + online + '/4</span><span class="ws-gear" data-gear="' + ti + '" title="Configurar aba">⚙</span></button>';
+    }).join('') + (workspaces.length < 4 ? '<button id="wsAdd" title="Nova aba com quatro contas">＋ Nova aba</button>' : '');
+    workspaceBar.querySelectorAll('.ws-tab').forEach(b => b.onclick = e => { const gear = e.target.closest('[data-gear]'); if (gear) { e.stopPropagation(); openWorkspaceSettings(+gear.dataset.gear); return; } switchWorkspace(+b.dataset.ws); });
+    const add = document.getElementById('wsAdd'); if (add) add.onclick = addWorkspace;
+    if (typeof statsEl !== 'undefined') statsEl.style.top = (document.getElementById('topbar').offsetHeight + workspaceBar.offsetHeight) + 'px';
+  }
+  function showActiveWorkspace() {
+    [...grid.children].forEach((p, i) => p.classList.toggle('tab-hidden', Math.floor(i / PER_TAB) !== activeTab));
+    const ws = workspaces[activeTab]; cardsOn = !!ws.simple; eco = ws.eco !== false; muted = !!ws.muted; layoutMode = ws.layout || 'grid'; chatHidden = !!ws.chatHidden; dockHidden = !!ws.dockHidden; cleanOn = !!ws.clean; alertsOn = !!ws.alerts; sellGuardOn = !!ws.sellGuard;
+    applyCards(); applyEco(); applyMute(); applyLayout(); applyChat(); applyDock(); applyClean(); applyAlerts(); applySellGuard(); renderWorkspaceTabs(); ajustaProporcao();
+    if (statsOpen) { statsIdx = -1; buildStatsTabs(); refreshStats(); }
+  }
+  function switchWorkspace(ti) {
+    if (ti === activeTab || !workspaces[ti]) return;
+    [...grid.children].forEach(p => p.classList.remove('expanded'));
+    activeTab = ti; saveWorkspaces(); showActiveWorkspace();
+  }
+  async function addWorkspace() {
+    if (workspaces.length >= 4) return;
+    const ti = workspaces.length, id = 'tab' + (ti + 1) + '-' + Date.now().toString(36);
+    workspaces.push({ id, name:'Aba ' + (ti + 1), eco:true, simple:false, muted:false, layout:'grid', chatHidden:true, dockHidden:false, clean:true, alerts:true, sellGuard:true });
+    for (let n = 0; n < PER_TAB; n++) { const i = ti * PER_TAB + n; accounts[i] = blank(); off[i] = false; lastLogin[i] = 0; alertedBalls[i] = false; criarPainel(i); }
+    await save(); saveWorkspaces(); switchWorkspace(ti); renderWorkspaceTabs();
+  }
+  const proxyOverlay = document.getElementById('proxyOverlay'); let editingWorkspace = 0;
+  function proxyFormValue() { return { url:document.getElementById('proxyUrl').value.trim(), username:document.getElementById('proxyUser').value, password:document.getElementById('proxyPass').value }; }
+  function openWorkspaceSettings(ti) {
+    editingWorkspace = ti; const ws = workspaces[ti], p = proxyConfigs[ws.id] || {};
+    document.getElementById('wsName').value = ws.name; document.getElementById('proxyUrl').value = p.url || ''; document.getElementById('proxyUser').value = p.username || ''; document.getElementById('proxyPass').value = p.password || ''; document.getElementById('proxyResult').textContent = '';
+    proxyOverlay.classList.add('show');
+  }
+  document.getElementById('proxyCancel').onclick = () => proxyOverlay.classList.remove('show');
+  proxyOverlay.onclick = e => { if (e.target === proxyOverlay) proxyOverlay.classList.remove('show'); };
+  document.getElementById('proxyTest').onclick = async () => {
+    const out = document.getElementById('proxyResult'), ws = workspaces[editingWorkspace]; out.textContent = 'Aplicando e consultando o IP…';
+    const applied = await window.pokeAPI.applyTabProxy(ws.id, proxyFormValue()); if (!applied.ok) { out.textContent = applied.error; return; }
+    const r = await window.pokeAPI.testTabProxy(ws.id); out.textContent = r.ok ? 'IP de saída: ' + r.ip : r.error;
+  };
+  document.getElementById('proxySave').onclick = async () => {
+    const ws = workspaces[editingWorkspace], cfg = proxyFormValue(), out = document.getElementById('proxyResult');
+    ws.name = document.getElementById('wsName').value.trim().slice(0, 30) || ('Aba ' + (editingWorkspace + 1)); out.textContent = 'Aplicando configuração…';
+    const r = await window.pokeAPI.applyTabProxy(ws.id, cfg); if (!r.ok) { out.textContent = r.error; return; }
+    proxyConfigs[ws.id] = cfg; await window.pokeAPI.saveTabProxies(proxyConfigs); saveWorkspaces(); renderWorkspaceTabs(); out.textContent = r.direct ? 'Conexão direta aplicada.' : 'Proxy aplicado às quatro contas.';
+  };
+  setInterval(renderWorkspaceTabs, 15000);
 
   function toggleExpand(i) {
     const p = grid.children[i];
@@ -942,7 +1021,7 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
   }
 
   function loginAll() {
-    webviews.forEach((wv, i) => {
+    activeRange().forEach(i => { const wv = webviews[i];
       const c = accounts[i];
       if (!c || !c.email || !c.senha) return;
       lastLogin[i] = 0; // clique manual sempre loga, ignora o cooldown
@@ -958,7 +1037,7 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
   function openAccounts() {
     const rows = document.getElementById('accRows');
     rows.innerHTML = '';
-    accounts.forEach((c, i) => {
+    activeRange().forEach(i => { const c = accounts[i];
       const row = document.createElement('div');
       row.className = 'acc-row';
       row.innerHTML = `
@@ -980,7 +1059,7 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
     document.querySelectorAll('#accRows input').forEach(inp => {
       accounts[+inp.dataset.i][inp.dataset.f] = inp.value;
     });
-    grid.querySelectorAll('.name').forEach((el, i) => el.textContent = accounts[i].name || defName(i));
+    grid.querySelectorAll('.panel').forEach((panel, i) => { const el = panel.querySelector('.name'); if (el) el.textContent = accounts[i].name || defName(i); });
     await save();
     overlay.classList.remove('show');
   };
@@ -988,10 +1067,10 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
   // ----- Topbar -----
   const muteBtn = document.getElementById('muteAll');
   function applyMute() {
+    workspaces[activeTab].muted = muted; saveWorkspaces();
     muteBtn.textContent = muted ? t('muted') : t('sound');
     muteBtn.classList.toggle('on', muted);
-    webviews.forEach(w => { try { w.setAudioMuted(muted); } catch {} });
-    lsSet('muted', muted ? '1' : '0');
+    webviews.forEach((w, i) => { try { w.setAudioMuted(!!tabOf(i).muted || !!tabOf(i).simple); } catch {} });
   }
   muteBtn.onclick = () => { muted = !muted; applyMute(); };
 
@@ -1018,36 +1097,37 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
     return d;
   }
   const ecoBtn = document.getElementById('eco');
-  let eco = lsGet('eco') !== '0'; // ligado por padrao
-  // ponytail: nao intercepta cancelAnimationFrame; suficiente para game-loops comuns
+  let eco = workspaces[activeTab].eco !== false;
+  // Mantem request/cancel simetricos: jogos que cancelam um frame nao deixam callbacks atrasados.
   const ecoScript = (fps) => `(() => {
     if (!window.__eco) {
-      window.__eco = { native: window.requestAnimationFrame.bind(window), fps: 0, last: 0 };
+      window.__eco = { native: window.requestAnimationFrame.bind(window), cancel: window.cancelAnimationFrame.bind(window), fps: 0, last: 0 };
       window.requestAnimationFrame = (cb) => {
         const s = window.__eco;
         if (!s.fps) return s.native(cb);
         const wait = Math.max(0, (1000 / s.fps) - (performance.now() - s.last));
         return setTimeout(() => { s.last = performance.now(); s.native(cb); }, wait);
       };
+      window.cancelAnimationFrame = (id) => { clearTimeout(id); window.__eco.cancel(id); };
     }
     window.__eco.fps = ${fps};
   })()`;
   // Modo Cartas: no ultra leve o canvas do jogo some e o rAF cai pra 1fps (o farm e do servidor)
-  let cardsOn = false, cdHtmlAnt = ''; // sempre comeca desligado: com o jogo escondido nao dava pra logar/resolver captcha
+  let cardsOn = !!workspaces[activeTab].simple, cdHtmlAnt = '';
   // ultra leve: esconde o que pinta (canvas/vídeo) e mata animações/transições CSS (corta paint/GPU).
   // NÃO mexe em WebSocket/timers do jogo, então o farm (que é do servidor) continua igual.
   const ultraScript = (on) => on
     ? `(()=>{let s=document.getElementById('pg-ultra');if(!s){s=document.createElement('style');s.id='pg-ultra';document.head.appendChild(s);}s.textContent='canvas,video{display:none !important} *{animation:none !important;transition:none !important;will-change:auto !important}';})()`
     : `(()=>{const s=document.getElementById('pg-ultra');if(s)s.remove();})()`;
-  const ecoFps = () => cardsOn ? 1 : (eco ? 15 : 0);
+  const ecoFps = (i) => { const ws = tabOf(i); return ws.simple ? 1 : (ws.eco ? (Math.floor(i / PER_TAB) === activeTab ? 15 : 5) : 0); };
   function applyEco() {
+    workspaces[activeTab].eco = eco; saveWorkspaces();
     ecoBtn.textContent = eco ? t('eco') : t('ecoOff');
     ecoBtn.classList.toggle('on', eco);
     webviews.forEach((w, i) => {
       if (off[i]) return;
-      try { w.executeJavaScript(ecoScript(ecoFps())).catch(() => {}); } catch {}
+      try { w.executeJavaScript(ecoScript(ecoFps(i))).catch(() => {}); } catch {}
     });
-    lsSet('eco', eco ? '1' : '0');
   }
   ecoBtn.onclick = () => { eco = !eco; applyEco(); };
 
@@ -1193,12 +1273,12 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
     if (${esconder}) { window.__chatObs = new MutationObserver(aplica); window.__chatObs.observe(document.documentElement, { childList: true, subtree: true }); }
   })()`;
   const chatBtn = document.getElementById('chat');
-  let chatHidden = lsGet('chatHidden') !== '0'; // fechado por padrao
+  let chatHidden = !!workspaces[activeTab].chatHidden;
   function applyChat() {
+    workspaces[activeTab].chatHidden = chatHidden; saveWorkspaces();
     chatBtn.textContent = chatHidden ? t('chatHidden') : t('chatShown');
     chatBtn.classList.toggle('on', !chatHidden);
-    webviews.forEach((w, i) => { if (off[i]) return; try { w.executeJavaScript(chatScript(chatHidden || cardsOn)).catch(() => {}); } catch {} });
-    lsSet('chatHidden', chatHidden ? '1' : '0');
+    webviews.forEach((w, i) => { if (off[i]) return; try { w.executeJavaScript(chatScript(!!tabOf(i).chatHidden || tabOf(i).simple)).catch(() => {}); } catch {} });
   }
   chatBtn.onclick = () => { chatHidden = !chatHidden; applyChat(); };
 
@@ -1235,12 +1315,12 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
   // Migracao: a 1a versao escondia o menu do jogo por padrao e alguns usuarios estranharam.
   // Agora ele vem VISIVEL; limpamos a preferencia antiga uma unica vez pra valer pra quem ja usou.
   if (lsGet('dockMigrado') !== '1') { lsDel('dockHidden'); lsSet('dockMigrado', '1'); }
-  let dockHidden = lsGet('dockHidden') === '1'; // visivel por padrao; usuario esconde se quiser
+  let dockHidden = !!workspaces[activeTab].dockHidden;
   function applyDock() {
+    workspaces[activeTab].dockHidden = dockHidden; saveWorkspaces();
     dockBtn.textContent = t('dockLabel'); // estado vai pela cor (.on = visível), igual o Eco
     dockBtn.classList.toggle('on', !dockHidden);
-    webviews.forEach((w, i) => { if (off[i]) return; try { w.executeJavaScript(dockScript(dockHidden)).catch(() => {}); } catch {} });
-    lsSet('dockHidden', dockHidden ? '1' : '0');
+    webviews.forEach((w, i) => { if (off[i]) return; try { w.executeJavaScript(dockScript(!!tabOf(i).dockHidden)).catch(() => {}); } catch {} });
   }
   dockBtn.onclick = () => { dockHidden = !dockHidden; applyDock(); };
 
@@ -1255,12 +1335,12 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
       + '.game-hud-tr:hover,nav.game-dock:hover{opacity:1 !important}';
   })()`;
   const cleanBtn = document.getElementById('cleanHud');
-  let cleanOn = lsGet('cleanHud') !== '0'; // ligado por padrao
+  let cleanOn = !!workspaces[activeTab].clean;
   function applyClean() {
+    workspaces[activeTab].clean = cleanOn; saveWorkspaces();
     cleanBtn.textContent = t('clean'); cleanBtn.title = t('cleanTitle');
     cleanBtn.classList.toggle('on', cleanOn);
-    webviews.forEach((w, i) => { if (off[i] || !w) return; try { w.executeJavaScript(cleanScript(cleanOn)).catch(() => {}); } catch {} });
-    lsSet('cleanHud', cleanOn ? '1' : '0');
+    webviews.forEach((w, i) => { if (off[i] || !w) return; try { w.executeJavaScript(cleanScript(!!tabOf(i).clean)).catch(() => {}); } catch {} });
   }
   cleanBtn.onclick = () => { cleanOn = !cleanOn; applyClean(); };
 
@@ -1287,7 +1367,7 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
   })()`;
   const huntBtn = document.getElementById('hunt');
   huntBtn.onclick = () => {
-    webviews.forEach((w, i) => { if (off[i]) return; try { w.executeJavaScript(huntScript).catch(() => {}); } catch {} });
+    activeRange().forEach(i => { const w = webviews[i]; if (!w || off[i]) return; try { w.executeJavaScript(huntScript).catch(() => {}); } catch {} });
   };
 
   // ----- IV's: o card unico do app (a logica esta na secao 'Calculadora de IV unica') -----
@@ -1378,33 +1458,33 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
 
   // ----- Alertas: notifica quando uma conta cai (watchdog) ou fica sem pokebola -----
   const alertBtn = document.getElementById('alerts');
-  let alertsOn = lsGet('alerts') !== '0'; // ligado por padrao
+  let alertsOn = !!workspaces[activeTab].alerts;
   function applyAlerts() {
+    workspaces[activeTab].alerts = alertsOn; saveWorkspaces();
     alertBtn.textContent = t('alerts');
     alertBtn.title = t('alertsTitle');
     alertBtn.classList.toggle('on', alertsOn);
-    lsSet('alerts', alertsOn ? '1' : '0');
   }
   alertBtn.onclick = () => { alertsOn = !alertsOn; applyAlerts(); };
 
   // ----- Proteção de venda (toggle): o guard injetado lê window.__pgSellGuardOn -----
   const sgBtn = document.getElementById('sellguard');
-  let sellGuardOn = lsGet('sellguard') !== '0'; // ligado por padrao
+  let sellGuardOn = !!workspaces[activeTab].sellGuard;
   // Itens que o usuario quer proteger, alem dos que ja vem travados. Nome minusculo (o guard
   // compara pelo nome do items.json), capado e sem duplicata: dado de disco nao entra cru.
   let sellLock = [];
   try { sellLock = [...new Set(lsArr('sellLock').map(x => String(x || '').toLowerCase().trim()).filter(x => x && x.length < 60))].slice(0, 80); } catch {}
   const saveSellLock = () => { try { lsSet('sellLock', JSON.stringify(sellLock)); } catch {} };
   function applySellGuard() {
+    workspaces[activeTab].sellGuard = sellGuardOn; saveWorkspaces();
     sgBtn.textContent = t('sellguard');
     sgBtn.title = t('sellguardTitle');
     sgBtn.classList.toggle('on', sellGuardOn);
-    lsSet('sellguard', sellGuardOn ? '1' : '0');
-    webviews.forEach((w, i) => { if (off[i] || !w) return; try { w.executeJavaScript('window.__pgSellGuardOn=' + (sellGuardOn ? 'true' : 'false') + ';window.__pgSellLock=' + JSON.stringify(sellLock)).catch(() => {}); } catch {} });
+    webviews.forEach((w, i) => { if (off[i] || !w) return; try { w.executeJavaScript('window.__pgSellGuardOn=' + (tabOf(i).sellGuard ? 'true' : 'false') + ';window.__pgSellLock=' + JSON.stringify(sellLock)).catch(() => {}); } catch {} });
   }
   sgBtn.onclick = () => { sellGuardOn = !sellGuardOn; applySellGuard(); };
   function alerta(i, chave) {
-    if (!alertsOn) return;
+    if (!tabOf(i).alerts) return;
     const nome = (accounts[i] && accounts[i].name) || defName(i);
     try { window.pokeAPI.notify('PokeGrid', nome + ' ' + t(chave)); } catch {}
   }
@@ -1594,7 +1674,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   const seenLog = {}; lifeShiny.forEach(x => seenLog[kSh(x.p, x)] = 1); lifeCatch.forEach(x => seenLog[kCa(x.p, x)] = 1);
   const mergedOnce = []; // 1o merge do painel: backfill silencioso (shiny de antes nao e novidade nem rajada de webhook)
   function mergeLogs(i, r) {
-    const acc = tabNames[i] || stName(i), dot = ACOR[i] || '#8b949e';
+    const acc = tabNames[i] || stName(i), dot = ACOR[i % PER_TAB] || '#8b949e';
     const avisa = !!mergedOnce[i]; mergedOnce[i] = 1;
     let dirty = false;
     (r.shinyLog || []).forEach(x => {
@@ -1605,7 +1685,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
       if (avisa && x.cap) { // CAPTUROU: aviso grande na tela, som de festa e notificacao propria
         const c = (r.catchLog || []).filter(y => y.sh).sort((p, q2) => Math.abs((+p.t || 0) - (+x.t || 0)) - Math.abs((+q2.t || 0) - (+x.t || 0)))[0]; // pega IV/qualidade da captura correspondente
         festaShiny({ n: x.n || (c && c.n), sid: x.sid, acc, dot, iv: c && c.iv, q: c && c.q, t: x.t });
-        if (alertsOn) alerta(i, 'msgShinyCap');
+        if (tabOf(i).alerts) alerta(i, 'msgShinyCap');
       }
     });
     (r.catchLog || []).forEach(x => { const key = kCa(i, x); if (seenLog[key]) return; seenLog[key] = 1; dirty = true; lifeCatch.push({ n: String(x.n || '').slice(0, 40), iv: +x.iv || 0, q: +x.q || 0, sh: !!x.sh, fx: !!x.fx, t: +x.t || 0, p: i, acc, dot }); });
@@ -1621,7 +1701,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   function checkStall(i, r) {
     const now = Date.now();
     if (lastK[i] === undefined || r.kills !== lastK[i]) { lastK[i] = r.kills; lastKT[i] = now; stallOn[i] = false; return; }
-    if (r.kills > 0 && !stallOn[i] && alertsOn && now - (lastKT[i] != null ? lastKT[i] : now) > 600e3) { stallOn[i] = true; alerta(i, 'msgStalled'); }
+    if (r.kills > 0 && !stallOn[i] && tabOf(i).alerts && now - (lastKT[i] != null ? lastKT[i] : now) > 600e3) { stallOn[i] = true; alerta(i, 'msgStalled'); }
   }
 
   const pendA = [0, 0, 0, 0]; // ticks seguidos sem resposta (renderer travado deixa a promise pendente pra sempre)
@@ -1641,7 +1721,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
         if (r.sess && r.sess.start) sessSnap[i] = { s: r.sess, slug: r.slug || '', cl: r.catchLog || [], sl: r.shinyLog || [], t: Date.now() };
         // shiny encontrado: acumula na vida da conta (sempre), toca o som e avisa (se ligados)
         if (lastShiny[i] === undefined || r.shinyN < lastShiny[i]) lastShiny[i] = r.shinyN;
-        else if (r.shinyN > lastShiny[i]) { const delta = r.shinyN - lastShiny[i]; lastShiny[i] = r.shinyN; addShinyLife(r.cid, delta); if (sndShinyOn) beepShiny(); if (alertsOn) alerta(i, 'msgShiny'); }
+        else if (r.shinyN > lastShiny[i]) { const delta = r.shinyN - lastShiny[i]; lastShiny[i] = r.shinyN; addShinyLife(r.cid, delta); if (sndShinyOn) beepShiny(); if (tabOf(i).alerts) alerta(i, 'msgShiny'); }
         registraHunt(i, r.prevHunt); // hunt encerrada entra no log sozinha
         mergeLogs(i, r);  // logs vitalicios + webhook de shiny
         accumHist(i, r);  // historico diario
@@ -1649,7 +1729,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
         // e o farm nao esta travado, so nao existe. Zera as travas pro proximo login avisar direito.
         if (!r.live) { lowOn[i] = {}; stallOn[i] = false; lastK[i] = undefined; return; }
         checkStall(i, r); // farm parado
-        if (!alertsOn) return;
+        if (!tabOf(i).alerts) return;
         if (lastFaint[i] === undefined || r.faintN < lastFaint[i]) lastFaint[i] = r.faintN;
         else if (r.faintN > lastFaint[i]) { lastFaint[i] = r.faintN; alerta(i, 'msgFaint'); }
         // cada aviso depende do dado que ele mede: inventario ainda carregando nao vale como "acabou"
@@ -1725,7 +1805,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
       const ix = webviews.findIndex(w => { try { return w && w.getWebContentsId() === id; } catch { return false; } });
       if (ix >= 0) toggleExpand(ix);
     }
-    else if (k.startsWith('expand')) toggleExpand(+k.slice(6));
+    else if (k.startsWith('expand')) toggleExpand(tabStart() + (+k.slice(6)));
   });
 
   // ----- Referral: copia o link de convite -----
@@ -1735,10 +1815,10 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
     refBtn.textContent = t('refCopied');
     setTimeout(() => { refBtn.textContent = '🔗'; }, 1500);
   };
-  document.getElementById('reloadAll').onclick = () => webviews.forEach((w, i) => { if (!off[i]) w.reload(); });
+  document.getElementById('reloadAll').onclick = () => activeRange().forEach(i => { const w = webviews[i]; if (w && !off[i]) w.reload(); });
   document.getElementById('faqBtn').onclick = () => window.open('https://github.com/soufoka/PokeGrid-source/blob/main/FAQ.md');
   // Layout dos paineis: grade (2x2) -> coluna (vertical) -> linha (horizontal)
-  let layoutMode = lsGet('layout') || 'grid';
+  let layoutMode = workspaces[activeTab].layout || 'grid';
   function applyLayout() {
     grid.classList.remove('one-col', 'one-row');
     if (layoutMode === 'col') grid.classList.add('one-col');
@@ -1747,7 +1827,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
     const lb = document.getElementById('layout');
     lb.textContent = t(layoutMode === 'col' ? 'layoutCol' : layoutMode === 'row' ? 'layoutRow' : 'layout');
     lb.title = t('layoutTitle');
-    lsSet('layout', layoutMode);
+    workspaces[activeTab].layout = layoutMode; saveWorkspaces();
   }
   document.getElementById('layout').onclick = () => { layoutMode = layoutMode === 'grid' ? 'col' : layoutMode === 'col' ? 'row' : 'grid'; applyLayout(); };
   applyLayout();
@@ -1847,7 +1927,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   statsEl.id = 'stats';
   statsEl.innerHTML = '<div class="sb-top"></div><div class="st-head"><span>📊 Resumo</span><button class="st-reset" title="Zerar a sessão (todas as contas)">⟲</button><button class="st-gear" title="Configurar o painel">⚙</button><button class="st-x" title="Fechar">✕</button></div><div class="st-tabs"></div><div class="st-body"></div><div class="st-cfg"></div><div class="st-resize" title="Arraste para ajustar a largura"></div>';
   document.body.appendChild(statsEl);
-  statsEl.style.top = document.getElementById('topbar').offsetHeight + 'px';
+  statsEl.style.top = (document.getElementById('topbar').offsetHeight + document.getElementById('workspaceBar').offsetHeight) + 'px';
   statsEl.style.bottom = '0';
   statsEl.style.width = (+lsGet('statsW') || 350) + 'px';
   document.body.style.setProperty('--statsw', statsEl.style.width); // o grid acompanha a largura do painel
@@ -1866,6 +1946,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   const sgn = n => (n > 0 ? '+' : '') + nf(n);
   const tsec = s => { s = Math.max(0, Math.round(s || 0)); const m = Math.floor(s % 3600 / 60), ss = s % 60, h = Math.floor(s / 3600); return h ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm ' + String(ss).padStart(2, '0') + 's'; };
   const stName = i => (accounts[i] && accounts[i].name) || defName(i);
+  const fullAccountName = (i, name) => workspaces[Math.floor(i / PER_TAB)].name + ' · ' + (name || tabNames[i] || stName(i));
   const nc = n => { if (n == null) return '–'; const s = n < 0 ? '-' : '', x = Math.abs(n); if (x >= 1e6) return s + (x / 1e6).toFixed(x >= 1e7 ? 0 : 1).replace('.0', '').replace('.', ',') + 'M'; if (x >= 1e4) return s + (x / 1e3).toFixed(x >= 1e5 ? 0 : 1).replace('.0', '').replace('.', ',') + 'K'; return nf(n); };
   const ncs = n => (n > 0 ? '+' : '') + nc(n);
   const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
@@ -1884,11 +1965,11 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
     all.title = t('stAllTitle');
     all.onclick = () => { statsIdx = -1; buildStatsTabs(); refreshStats(); };
     stTabs.appendChild(all);
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < webviews.length; i++) {
       const b = document.createElement('div');
       b.className = 'st-tab' + (i === statsIdx ? ' on' : '');
-      b.style.setProperty('--tabc', ACOR[i] || '#e3350d'); // destaque na cor da conta
-      b.textContent = tabNames[i] || stName(i);
+      b.style.setProperty('--tabc', ACOR[i % PER_TAB] || '#e3350d'); // destaque na cor da conta
+      b.textContent = fullAccountName(i);
       b.onclick = () => { statsIdx = i; buildStatsTabs(); refreshStats(); };
       stTabs.appendChild(b);
     }
@@ -2063,7 +2144,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   const NAME_JS = "(window.__poke&&window.__poke.api&&window.__poke.api['/api/characters/me']&&window.__poke.api['/api/characters/me'].character.name)||''";
   async function loadTabNames() {
     let changed = false;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < webviews.length; i++) {
       if (off[i] || !webviews[i]) continue;
       try { const nm = await webviews[i].executeJavaScript(NAME_JS); if (nm && tabNames[i] !== nm) { tabNames[i] = nm; changed = true; } } catch {}
     }
@@ -2073,7 +2154,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   // vigia do login: quando a primeira conta entra no jogo, reabre o painel que estava esperando
   setInterval(async () => {
     if (!statsAutoPend) return;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < webviews.length; i++) {
       if (off[i] || !webviews[i]) continue;
       try {
         if (await webviews[i].executeJavaScript(NAME_JS)) {
@@ -2103,12 +2184,14 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   const sgrid = (n, inner) => '<div class="agg4" style="grid-template-columns:repeat(' + n + ',1fr)">' + inner + '</div>';
   async function renderAggregate() {
     let gph = 0, xph = 0, kph = 0, kills = 0, caps = 0, shF = 0, shC = 0, money = 0, dia = 0, balls = 0, pot = 0, rev = 0, lifeT = 0, cards = '';
-    for (let i = 0; i < count; i++) {
-      const nm0 = tabNames[i] || stName(i), dot = ACOR[i] || '#8b949e';
+    for (let i = 0; i < webviews.length; i++) {
+      const nm0 = fullAccountName(i), dot = ACOR[i % PER_TAB] || '#8b949e';
       if (off[i] || !webviews[i]) { cards += aggCard(dot, nm0, null); continue; }
-      let d = null; try { d = await webviews[i].executeJavaScript(READ_STATE); } catch {}
+      let d = null; const cached = stCache[i];
+      if (cached && Date.now() - cached.t < 30000) d = cached.d;
+      else try { d = await webviews[i].executeJavaScript(READ_STATE); } catch {}
       if (d && d.name && tabNames[i] !== d.name) { tabNames[i] = d.name; buildStatsTabs(); }
-      cards += aggCard(dot, (d && d.name) || nm0, d);
+      cards += aggCard(dot, d && d.name ? fullAccountName(i, d.name) : nm0, d);
       const a = d && d.ok ? d.a : null;
       if (a) { gph += a.gph || 0; xph += a.xph || 0; kph += a.kph || 0; kills += a.kills || 0; caps += a.captures || 0; shF += a.shinyFound || 0; shC += a.shinyCap || 0; }
       if (d) { money += d.gold || 0; dia += d.diamonds || 0; balls += d.balls || 0; pot += d.potions || 0; rev += d.revives || 0; lifeT += d.shinyEnc || 0; }
@@ -2128,8 +2211,8 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
 
   async function refreshStats() {
     if (!statsOpen || dragging) return;
-    if (stTabs.childElementCount !== count + 1) buildStatsTabs();
-    if (statsIdx >= count) { statsIdx = 0; buildStatsTabs(); }
+    if (stTabs.childElementCount !== webviews.length + 1) buildStatsTabs();
+    if (statsIdx >= webviews.length) { statsIdx = 0; buildStatsTabs(); }
     if (statsIdx === -1) { await renderAggregate(); return; }
     const w = webviews[statsIdx];
     if (off[statsIdx] || !w) { stBody.innerHTML = '<div class="st-empty">' + t('statsOff') + '</div>'; return; }
@@ -2191,7 +2274,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
     // abriu antes de qualquer conta renderizar (ex.: direto na aba Σ), busca na hora
     if (!lastData || !lastData.usedList || !lastData.usedList.length) {
       let j = statsIdx >= 0 ? statsIdx : -1;
-      if (j < 0 || off[j] || !webviews[j]) { j = -1; for (let i = 0; i < count; i++) { if (!off[i] && webviews[i]) { j = i; break; } } }
+      if (j < 0 || off[j] || !webviews[j]) { j = -1; for (let i = 0; i < webviews.length; i++) { if (!off[i] && webviews[i]) { j = i; break; } } }
       if (j >= 0) { try { const d = await webviews[j].executeJavaScript(READ_STATE); if (d && d.ok) lastData = d; } catch {} }
     }
     let h = '<div class="cfg-h">' + t('cfgSections') + '</div><div class="cfg-secs">';
@@ -2481,7 +2564,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   // amostrador de fundo: roda mesmo com painel/cartas fechados, pra base acumular durante o farm
   setInterval(async () => {
     let mudou = false;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < webviews.length; i++) {
       if (off[i] || !webviews[i]) continue;
       try { const d = await webviews[i].executeJavaScript(READ_STATE); if (d && d.ok && d.cid && d.hunt && d.a) { amostraHunt(d.cid, d.hunt, d.a); mudou = true; } } catch {}
     }
@@ -2497,7 +2580,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   function carregaItens() {
     if (itensCache || Date.now() - itensCacheT < 60e3) return;
     itensCacheT = Date.now();
-    for (let i = 0; i < count; i++) {
+    for (const i of activeRange()) {
       if (off[i] || !webviews[i]) continue;
       webviews[i].executeJavaScript(ITEMS_JS).then(r => { if (r && Object.keys(r).length) itensCache = r; }).catch(() => {});
       break;
@@ -2506,7 +2589,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   function carregaHunts() {
     if (huntsCache || Date.now() - huntsCacheT < 60e3) return;
     huntsCacheT = Date.now();
-    for (let i = 0; i < count; i++) {
+    for (const i of activeRange()) {
       if (off[i] || !webviews[i]) continue;
       webviews[i].executeJavaScript(HUNTS_JS).then(r => { if (r && r.h && r.h.length) { const seen = {}; huntsCache = r.h.filter(x => !seen[x.name + x.level] && (seen[x.name + x.level] = 1)); creaturesById = r.byId || {}; basesByName = r.bs || {}; movesByName = r.mv || {}; } }).catch(() => {});
       break;
@@ -2550,8 +2633,8 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
     const ae = document.activeElement;
     if (!force && ae && cardsEl.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
     const rows = []; let sumG = 0, sumX = 0, sumK = 0, sumC = 0, sumSF = 0, sumSC = 0, ativos = 0; const shinyTried = {};
-    for (let i = 0; i < count; i++) {
-      const nm0 = tabNames[i] || stName(i), dot = ACOR[i] || '#8b949e';
+    for (const i of activeRange()) {
+      const nm0 = tabNames[i] || stName(i), dot = ACOR[i % PER_TAB] || '#8b949e';
       if (off[i] || !webviews[i]) { rows.push({ i, dot, name: nm0, st: 'off' }); continue; }
       let d = null; const pc = stCache[i]; // push recente: usa e nao pergunta
       if (pc && Date.now() - pc.t < 30000) d = pc.d;
@@ -2597,7 +2680,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
         + kpi(ncs(sumG), t('cdGold'), sumG < 0 ? '#f0883e' : '#3fb950') + kpi(nc(sumX), t('cdXp'), '#79c0ff')
         + kpi(nf(sumK), t('cdKills')) + kpi(nf(sumC), t('cdCaps'))
         + kpi(nf(sumSF) + ' / ' + nf(sumSC), t('cdShiny'), sumSF > 0 ? '#f778ba' : null)
-        + kpi(ativos + ' / ' + count, t('cdActive'), '#3fb950') + '</div>';
+        + kpi(ativos + ' / ' + PER_TAB, t('cdActive'), '#3fb950') + '</div>';
     };
     SB.today = () => {
       const T = totalDia(curDay), W = somaDias(7), A = somaDias(0);
@@ -2939,13 +3022,13 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
     cardsEl.querySelectorAll('.cd-hide').forEach(f => f.onclick = () => { const k = f.dataset.h; if (huntHidden[k]) delete huntHidden[k]; else huntHidden[k] = 1; try { lsSet('huntHidden', JSON.stringify(huntHidden)); } catch {} refreshCards(true); });
   }
   function applyCards() {
+    workspaces[activeTab].simple = cardsOn; saveWorkspaces();
     document.body.classList.toggle('cards-on', cardsOn);
     cardsBtn.classList.toggle('on', cardsOn);
-    lsSet('cardsOn', cardsOn ? '1' : '0');
-    webviews.forEach((w, i) => { if (off[i] || !w) return; try { w.setAudioMuted(cardsOn || muted); w.executeJavaScript(ultraScript(cardsOn)).catch(() => {}); w.executeJavaScript(ecoScript(ecoFps())).catch(() => {}); w.executeJavaScript(chatScript(cardsOn || chatHidden)).catch(() => {}); } catch {} });
+    webviews.forEach((w, i) => { if (off[i] || !w) return; const simple = !!tabOf(i).simple; try { w.setAudioMuted(simple || !!tabOf(i).muted); w.executeJavaScript(ultraScript(simple)).catch(() => {}); w.executeJavaScript(ecoScript(ecoFps(i))).catch(() => {}); w.executeJavaScript(chatScript(simple || chatHidden)).catch(() => {}); } catch {} });
     if (cardsOn) { cdHtmlAnt = ''; cardsEl.innerHTML = '<div class="cd-empty" style="padding:20px">' + t('cdWaiting') + '</div>'; refreshCards(); }
   }
-  cardsBtn.onclick = () => { cardsOn = !cardsOn; applyCards(); };
+  cardsBtn.onclick = () => { cardsOn = !cardsOn; workspaces[activeTab].simple = cardsOn; applyCards(); };
   setInterval(() => { if (cardsOn && !document.hidden) refreshCards(); }, 10000); // compasso do Simples: os dados chegam por push; isso so redesenha (e e a reserva se o push faltar)
 
   // Zerar a sessao: nossos numeros vem de P.sess (acumulador proprio), que so reseta na troca de hunt.
@@ -2954,7 +3037,8 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
   const RESET_SESS = "(()=>{const P=window.__poke;if(!P)return;P.sess={start:Date.now(),kills:0,xp:0,balls:0,captures:0,drops:{},shinyN:0,shinySeen:{},shinyCapN:0,faintN:0,sellG:0,supGold:0,supN:0,slug:'',hp:{}};P.catchLog=[];P.shinyLog=[];})()";
   function resetSessao() {
     if (!window.confirm(t('resetConfirm'))) return;
-    webviews.forEach((w, i) => { if (off[i] || !w) return; try { w.executeJavaScript(RESET_SESS).catch(() => {}); } catch {} });
+    const targets = cardsOn ? activeRange() : webviews.map((_w, i) => i);
+    targets.forEach(i => { const w = webviews[i]; if (off[i] || !w) return; try { w.executeJavaScript(RESET_SESS).catch(() => {}); } catch {} });
     dhist = []; // zera a tendencia (sparklines) tambem
     utBase.length = 0; sessSnap.length = 0; // shinies tentados "sessao" recomecam; e a semente antiga nao ressuscita a sessao zerada
     refreshStats(); if (cardsOn) refreshCards();
@@ -3130,7 +3214,7 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
       ivEl.innerHTML = '<div class="iv-hd"><span class="iv-nm">' + t('ivcTitle') + '</span><button class="iv-sp" id="ivX">✕</button></div>'
         + '<div class="iv-vazio">' + (d && d.erro ? esc(d.nome || '') + ': ' + esc(d.erro) : t('ivcHint')) + '</div>';
     } else {
-      const cor = ACOR[ivFonte] || '#8b949e', acc = tabNames[ivFonte] || stName(ivFonte);
+      const cor = ACOR[ivFonte % PER_TAB] || '#8b949e', acc = tabNames[ivFonte] || stName(ivFonte);
       const raro = d.qualidade ? RARO(+d.qualidade) : null;
       const kpi = (k, v, c) => '<div class="iv-kpi"><div class="k">' + k + '</div><div class="v"' + (c ? ' style="color:' + c + '"' : '') + '>' + v + '</div></div>';
       const kpiInp = (k, id, val, step) => '<div class="iv-kpi"><div class="k">' + k + '</div><input class="iv-inp" id="' + id + '" type="number" step="' + step + '" value="' + val + '"></div>';
@@ -3258,6 +3342,8 @@ return {live,hasBalls,hasInv,balls,potions,revives,prevHunt:resumo(P.prev),shiny
 
   // ----- Init -----
   (async () => {
+    try { proxyConfigs = await window.pokeAPI.loadTabProxies() || {}; } catch { proxyConfigs = {}; }
+    for (const ws of workspaces) { const cfg = proxyConfigs[ws.id]; if (cfg && cfg.url) try { await window.pokeAPI.applyTabProxy(ws.id, cfg); } catch {} }
     try { accounts = normalize(await window.pokeAPI.loadCreds()); }
     catch { accounts = normalize([]); }
     build();

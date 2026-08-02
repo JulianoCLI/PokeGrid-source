@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   readPreset: (name) => ipcRenderer.invoke('preset:read', name),
   fetchUserScript: (url) => ipcRenderer.invoke('userscript:fetch', url),
   getUserScriptInfo: (url) => ipcRenderer.invoke('userscript:info', url),
+  loadTabProxies: () => ipcRenderer.invoke('proxy:load'),
+  saveTabProxies: (configs) => ipcRenderer.invoke('proxy:save', configs),
+  applyTabProxy: (tabId, config) => ipcRenderer.invoke('proxy:apply', tabId, config),
+  testTabProxy: (tabId) => ipcRenderer.invoke('proxy:test', tabId),
   logError: (origem, msg) => ipcRenderer.invoke('errlog:write', origem, msg),
   openErrorLog: () => ipcRenderer.invoke('errlog:open')
 });

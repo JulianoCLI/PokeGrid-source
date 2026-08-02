@@ -49,6 +49,10 @@ const GAME = 'https://poke.idleworld.online';
 const abreFora = (url) => { if (/^https?:\/\//i.test(url)) shell.openExternal(url); };
 app.on('web-contents-created', (_e, contents) => {
   if (contents.getType() !== 'webview') return;
+  // Abas ocultas continuam recebendo timers/rede normalmente; o renderer limita apenas o FPS
+  // visual pelo Modo Eco, evitando que o Chromium atrase o farm em segundo plano.
+  try { contents.setBackgroundThrottling(false); } catch {}
+  try { contents.session.setPermissionRequestHandler((_wc, _p, cb) => cb(false)); } catch {}
   contents.setWindowOpenHandler(({ url }) => { abreFora(url); return { action: 'deny' }; });
   const guarda = (e, url) => {
     if (!url.startsWith(GAME) && url !== 'about:blank') { e.preventDefault(); abreFora(url); }
@@ -88,6 +92,7 @@ app.on('web-contents-created', (_e, contents) => {
 });
 
 const credFile = () => path.join(app.getPath('userData'), 'accounts.enc');
+const proxyFile = () => path.join(app.getPath('userData'), 'tab-proxies.enc');
 
 // Contas salvas: criptografadas em disco via DPAPI/keychain do SO (safeStorage).
 ipcMain.handle('creds:load', () => {
@@ -131,6 +136,52 @@ ipcMain.handle('notify', (_e, title, body) => {
 ipcMain.handle('preset:read', (_e, name) => {
   if (typeof name !== 'string' || !/^[\w.-]+\.js$/.test(name)) return '';
   try { return fs.readFileSync(path.join(__dirname, 'presets', name), 'utf8'); } catch { return ''; }
+});
+
+// Proxy por aba: as quatro sessoes continuam isoladas (cookies separados), mas recebem a mesma
+// rota. Usuario/senha ficam criptografados no mesmo esquema das credenciais das contas.
+const proxyAuth = new Map();
+const tabPartitions = (tabId) => Array.from({ length: 4 }, (_, i) => tabId === 'tab1' ? 'persist:conta' + (i + 1) : 'persist:' + tabId + '-conta' + (i + 1));
+const cleanTabId = id => /^tab[\w-]{0,40}$/.test(String(id)) ? String(id) : '';
+function cleanProxy(config) {
+  if (!config || !String(config.url || '').trim()) return { url: '', username: '', password: '' };
+  let raw = String(config.url).trim(); if (!/^[a-z]+:\/\//i.test(raw)) raw = 'http://' + raw;
+  let u; try { u = new URL(raw); } catch { throw new Error('Endereço de proxy inválido.'); }
+  if (!['http:', 'https:', 'socks4:', 'socks5:'].includes(u.protocol) || !u.hostname || !u.port) throw new Error('Use protocolo, servidor e porta. Ex.: http://127.0.0.1:8080');
+  const username = String(config.username || decodeURIComponent(u.username || '')).slice(0, 200);
+  const password = String(config.password || decodeURIComponent(u.password || '')).slice(0, 500);
+  u.username = ''; u.password = '';
+  return { url: u.toString().replace(/\/$/, ''), username, password };
+}
+ipcMain.handle('proxy:load', () => {
+  try { const b = fs.readFileSync(proxyFile()); return JSON.parse(safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(b) : b.toString('utf8')); } catch { return {}; }
+});
+ipcMain.handle('proxy:save', (_e, configs) => {
+  const safe = {}; if (configs && typeof configs === 'object') for (const id of Object.keys(configs).slice(0, 12)) { if (cleanTabId(id)) try { safe[id] = cleanProxy(configs[id]); } catch {} }
+  const json = JSON.stringify(safe), data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(json) : Buffer.from(json, 'utf8');
+  try { const f = proxyFile(); fs.writeFileSync(f + '.tmp', data); fs.renameSync(f + '.tmp', f); return true; } catch { return false; }
+});
+async function applyTabProxy(tabId, config) {
+  tabId = cleanTabId(tabId); if (!tabId) throw new Error('Aba inválida.');
+  const p = cleanProxy(config);
+  await Promise.all(tabPartitions(tabId).map(async part => {
+    const ses = session.fromPartition(part);
+    await ses.setProxy(p.url ? { mode: 'fixed_servers', proxyRules: p.url, proxyBypassRules: '<-loopback>' } : { mode: 'direct' });
+    proxyAuth.set(part, p.url ? { username: p.username, password: p.password } : null);
+    try { await ses.closeAllConnections(); } catch {}
+  }));
+  return { ok: true, direct: !p.url };
+}
+ipcMain.handle('proxy:apply', async (_e, tabId, config) => { try { return await applyTabProxy(tabId, config); } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle('proxy:test', async (_e, tabId) => {
+  tabId = cleanTabId(tabId); if (!tabId) return { ok: false, error: 'Aba inválida.' };
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 12000);
+  try { const res = await session.fromPartition(tabPartitions(tabId)[0]).fetch('https://api.ipify.org?format=json', { signal: ctrl.signal, cache: 'no-store' }); const data = await res.json(); return { ok: !!data.ip, ip: String(data.ip || '') }; }
+  catch { return { ok: false, error: 'Não foi possível consultar o IP desta aba.' }; } finally { clearTimeout(timer); }
+});
+app.on('login', (event, webContents, _details, authInfo, callback) => {
+  if (!authInfo || !authInfo.isProxy || !webContents || !webContents.session) return;
+  for (const [part, auth] of proxyAuth) if (auth && session.fromPartition(part) === webContents.session) { event.preventDefault(); callback(auth.username, auth.password); return; }
 });
 
 const USER_SCRIPT_HOSTS = new Set(['github.com', 'raw.githubusercontent.com']);
