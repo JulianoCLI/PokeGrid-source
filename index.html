@@ -26,6 +26,8 @@
   button:hover { background: #30363d; }
   button.primary { background: #e3350d; border-color: #e3350d; color: #fff; font-weight: 600; }
   button.primary:hover { background: #f0491f; }
+  button.danger { background:#6e2634; border-color:#8b3947; color:#fff; }
+  button.danger:hover { background:#8b3947; border-color:#f85149; }
   button.on { background: #238636; border-color: #238636; }
   #refBtn { margin-left: 14px; }
   /* pílula IV's: mesmo visual do botão da extensão dentro do jogo */
@@ -567,7 +569,7 @@
         <div class="proxy-auth"><input id="proxyUser" placeholder="Usuário (opcional)"><input id="proxyPass" type="password" placeholder="Senha (opcional)"></div>
       </div>
       <div id="proxyResult"></div>
-      <div class="modal-actions"><button id="proxyCancel">Cancelar</button><button id="proxyTest">Testar IP</button><button id="proxySave" class="primary">Salvar e aplicar</button></div>
+      <div class="modal-actions"><button id="wsDelete" class="danger" style="margin-right:auto">Excluir aba</button><button id="proxyCancel">Cancelar</button><button id="proxyTest">Testar IP</button><button id="proxySave" class="primary">Salvar e aplicar</button></div>
     </div>
   </div>
 
@@ -636,7 +638,7 @@ const HOME_URL  = 'https://poke.idleworld.online/?ref=CJNKGPB'; // link do refer
   const tabStart = () => activeTab * PER_TAB;
   const activeRange = () => Array.from({ length: PER_TAB }, (_, n) => tabStart() + n);
   const tabOf = i => workspaces[Math.floor(i / PER_TAB)] || workspaces[0];
-  const partitionOf = i => { const ti = Math.floor(i / PER_TAB), slot = i % PER_TAB; return ti === 0 ? 'persist:conta' + (slot + 1) : 'persist:' + workspaces[ti].id + '-conta' + (slot + 1); };
+  const partitionOf = i => { const ti = Math.floor(i / PER_TAB), slot = i % PER_TAB, ws = workspaces[ti]; return ws && ws.id === 'tab1' ? 'persist:conta' + (slot + 1) : 'persist:' + ws.id + '-conta' + (slot + 1); };
   const saveWorkspaces = () => { lsSet('workspaces', JSON.stringify(workspaces)); lsSet('activeWorkspace', activeTab); };
   let muted = !!workspaces[activeTab].muted;
 
@@ -935,10 +937,21 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
   function openWorkspaceSettings(ti) {
     editingWorkspace = ti; const ws = workspaces[ti], p = proxyConfigs[ws.id] || {};
     document.getElementById('wsName').value = ws.name; document.getElementById('proxyUrl').value = p.url || ''; document.getElementById('proxyUser').value = p.username || ''; document.getElementById('proxyPass').value = p.password || ''; document.getElementById('proxyResult').textContent = '';
+    const del = document.getElementById('wsDelete'); del.disabled = workspaces.length <= 1; del.title = del.disabled ? 'É necessário manter pelo menos uma aba' : 'Excluir esta aba e suas quatro sessões';
     proxyOverlay.classList.add('show');
   }
   document.getElementById('proxyCancel').onclick = () => proxyOverlay.classList.remove('show');
   proxyOverlay.onclick = e => { if (e.target === proxyOverlay) proxyOverlay.classList.remove('show'); };
+  document.getElementById('wsDelete').onclick = async () => {
+    if (workspaces.length <= 1) { proxyOverlay.classList.remove('show'); await scriptNotice('O PokeGrid precisa manter pelo menos uma aba.'); return; }
+    const ti = editingWorkspace, ws = workspaces[ti]; proxyOverlay.classList.remove('show');
+    const confirmed = await scriptDialog('Excluir a aba "' + ws.name + '"?\n\nAs quatro contas salvas, sessões de login e configurações de proxy desta aba serão removidas deste computador. Esta ação não pode ser desfeita.', true);
+    if (!confirmed) return;
+    const cleared = await window.pokeAPI.deleteWorkspace(ws.id); if (!cleared) { await scriptNotice('Não foi possível excluir completamente os dados da aba.'); return; }
+    accounts.splice(ti * PER_TAB, PER_TAB); workspaces.splice(ti, 1); delete proxyConfigs[ws.id];
+    if (ti < activeTab) activeTab--; else if (activeTab >= workspaces.length) activeTab = workspaces.length - 1;
+    await save(); await window.pokeAPI.saveTabProxies(proxyConfigs); saveWorkspaces(); location.reload();
+  };
   document.getElementById('proxyTest').onclick = async () => {
     const out = document.getElementById('proxyResult'), ws = workspaces[editingWorkspace]; out.textContent = 'Aplicando e consultando o IP…';
     const applied = await window.pokeAPI.applyTabProxy(ws.id, proxyFormValue()); if (!applied.ok) { out.textContent = applied.error; return; }

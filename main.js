@@ -179,6 +179,19 @@ ipcMain.handle('proxy:test', async (_e, tabId) => {
   try { const res = await session.fromPartition(tabPartitions(tabId)[0]).fetch('https://api.ipify.org?format=json', { signal: ctrl.signal, cache: 'no-store' }); const data = await res.json(); return { ok: !!data.ip, ip: String(data.ip || '') }; }
   catch { return { ok: false, error: 'Não foi possível consultar o IP desta aba.' }; } finally { clearTimeout(timer); }
 });
+ipcMain.handle('workspace:delete', async (_e, tabId) => {
+  tabId = cleanTabId(tabId); if (!tabId) return false;
+  try {
+    await Promise.all(tabPartitions(tabId).map(async part => {
+      const ses = session.fromPartition(part); proxyAuth.delete(part);
+      try { await ses.setProxy({ mode: 'direct' }); } catch {}
+      try { await ses.closeAllConnections(); } catch {}
+      try { await ses.clearStorageData(); } catch {}
+      try { await ses.clearCache(); } catch {}
+    }));
+    return true;
+  } catch { return false; }
+});
 app.on('login', (event, webContents, _details, authInfo, callback) => {
   if (!authInfo || !authInfo.isProxy || !webContents || !webContents.session) return;
   for (const [part, auth] of proxyAuth) if (auth && session.fromPartition(part) === webContents.session) { event.preventDefault(); callback(auth.username, auth.password); return; }

@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   saveTabProxies: (configs) => ipcRenderer.invoke('proxy:save', configs),
   applyTabProxy: (tabId, config) => ipcRenderer.invoke('proxy:apply', tabId, config),
   testTabProxy: (tabId) => ipcRenderer.invoke('proxy:test', tabId),
+  deleteWorkspace: (tabId) => ipcRenderer.invoke('workspace:delete', tabId),
   logError: (origem, msg) => ipcRenderer.invoke('errlog:write', origem, msg),
   openErrorLog: () => ipcRenderer.invoke('errlog:open')
 });
