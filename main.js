@@ -157,7 +157,7 @@ ipcMain.handle('proxy:load', () => {
   try { const b = fs.readFileSync(proxyFile()); return JSON.parse(safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(b) : b.toString('utf8')); } catch { return {}; }
 });
 ipcMain.handle('proxy:save', (_e, configs) => {
-  const safe = {}; if (configs && typeof configs === 'object') for (const id of Object.keys(configs).slice(0, 12)) { if (cleanTabId(id)) try { safe[id] = cleanProxy(configs[id]); } catch {} }
+  const safe = {}; if (configs && typeof configs === 'object') for (const id of Object.keys(configs)) { if (cleanTabId(id)) try { safe[id] = cleanProxy(configs[id]); } catch {} }
   const json = JSON.stringify(safe), data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(json) : Buffer.from(json, 'utf8');
   try { const f = proxyFile(); fs.writeFileSync(f + '.tmp', data); fs.renameSync(f + '.tmp', f); return true; } catch { return false; }
 });

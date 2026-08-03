@@ -90,6 +90,7 @@ ok(registrados.size === canais.length, 'todos os canais foram registrados uma ve
 
 console.log('--- abas, proxy e Eco ---');
 ok(index.includes("const PER_TAB = 4"), 'cada aba mantém quatro contas');
+ok(!index.includes('workspaces.length >= 4') && !index.includes('workspaces.length < 4'), 'quantidade de abas não tem limite artificial');
 ok(index.includes("testTabProxy") && preload.includes("proxy:test"), 'interface expõe o teste de IP por aba');
 ok(main.includes("ipcMain.handle('proxy:apply'") && main.includes("ipcMain.handle('proxy:test'"), 'proxy por aba tem aplicação e teste');
 ok(main.includes('setBackgroundThrottling(false)'), 'abas ocultas preservam timers enquanto o Eco controla o FPS');

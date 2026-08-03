@@ -627,7 +627,7 @@ const HOME_URL  = 'https://poke.idleworld.online/?ref=CJNKGPB'; // link do refer
   const webviews = [];
   const off = [], lastLogin = [], alertedBalls = [];
   const PER_TAB = 4;
-  let workspaces = lsArr('workspaces').filter(x => x && /^tab[\w-]{0,40}$/.test(x.id)).slice(0, 4);
+  let workspaces = lsArr('workspaces').filter(x => x && /^tab[\w-]{0,40}$/.test(x.id));
   if (!workspaces.length) workspaces = [{ id:'tab1', name:'Aba 1', eco:lsGet('eco') !== '0', simple:false }];
   workspaces = workspaces.map((x, i) => ({ id:x.id || ('tab' + (i + 1)), name:String(x.name || ('Aba ' + (i + 1))).slice(0, 30), eco:x.eco !== false, simple:!!x.simple, muted:x.muted != null ? !!x.muted : lsGet('muted') === '1', layout:['grid','col','row'].includes(x.layout) ? x.layout : (lsGet('layout') || 'grid'), chatHidden:x.chatHidden != null ? !!x.chatHidden : lsGet('chatHidden') !== '0', dockHidden:x.dockHidden != null ? !!x.dockHidden : lsGet('dockHidden') === '1', clean:x.clean != null ? !!x.clean : lsGet('cleanHud') !== '0', alerts:x.alerts != null ? !!x.alerts : lsGet('alerts') !== '0', sellGuard:x.sellGuard != null ? !!x.sellGuard : lsGet('sellguard') !== '0' }));
   let activeTab = Math.max(0, Math.min(workspaces.length - 1, +lsGet('activeWorkspace') || 0));
@@ -908,7 +908,7 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
     workspaceBar.innerHTML = workspaces.map((ws, ti) => {
       let online = 0; for (let i = ti * PER_TAB; i < ti * PER_TAB + PER_TAB; i++) if (stCache[i] && Date.now() - stCache[i].t < 30000) online++;
       return '<button class="ws-tab' + (ti === activeTab ? ' active' : '') + '" data-ws="' + ti + '"><span class="ws-name">' + escH(ws.name) + '</span>' + (proxyConfigs[ws.id] && proxyConfigs[ws.id].url ? '<span class="ws-proxy" title="Proxy configurado">🌐</span>' : '') + '<span class="ws-online">' + online + '/4</span><span class="ws-gear" data-gear="' + ti + '" title="Configurar aba">⚙</span></button>';
-    }).join('') + (workspaces.length < 4 ? '<button id="wsAdd" title="Nova aba com quatro contas">＋ Nova aba</button>' : '');
+    }).join('') + '<button id="wsAdd" title="Nova aba com quatro contas">＋ Nova aba</button>';
     workspaceBar.querySelectorAll('.ws-tab').forEach(b => b.onclick = e => { const gear = e.target.closest('[data-gear]'); if (gear) { e.stopPropagation(); openWorkspaceSettings(+gear.dataset.gear); return; } switchWorkspace(+b.dataset.ws); });
     const add = document.getElementById('wsAdd'); if (add) add.onclick = addWorkspace;
     if (typeof statsEl !== 'undefined') statsEl.style.top = (document.getElementById('topbar').offsetHeight + workspaceBar.offsetHeight) + 'px';
@@ -925,7 +925,6 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
     activeTab = ti; saveWorkspaces(); showActiveWorkspace();
   }
   async function addWorkspace() {
-    if (workspaces.length >= 4) return;
     const ti = workspaces.length, id = 'tab' + (ti + 1) + '-' + Date.now().toString(36);
     workspaces.push({ id, name:'Aba ' + (ti + 1), eco:true, simple:false, muted:false, layout:'grid', chatHidden:true, dockHidden:false, clean:true, alerts:true, sellGuard:true });
     for (let n = 0; n < PER_TAB; n++) { const i = ti * PER_TAB + n; accounts[i] = blank(); off[i] = false; lastLogin[i] = 0; alertedBalls[i] = false; criarPainel(i); }
@@ -946,10 +945,13 @@ S.supBase=cur;if(S.picBase==null){S.picBase=now;}else{if(now>S.picBase){const do
     const r = await window.pokeAPI.testTabProxy(ws.id); out.textContent = r.ok ? 'IP de saída: ' + r.ip : r.error;
   };
   document.getElementById('proxySave').onclick = async () => {
-    const ws = workspaces[editingWorkspace], cfg = proxyFormValue(), out = document.getElementById('proxyResult');
+    const btn = document.getElementById('proxySave'), ws = workspaces[editingWorkspace], cfg = proxyFormValue(), out = document.getElementById('proxyResult');
     ws.name = document.getElementById('wsName').value.trim().slice(0, 30) || ('Aba ' + (editingWorkspace + 1)); out.textContent = 'Aplicando configuração…';
-    const r = await window.pokeAPI.applyTabProxy(ws.id, cfg); if (!r.ok) { out.textContent = r.error; return; }
-    proxyConfigs[ws.id] = cfg; await window.pokeAPI.saveTabProxies(proxyConfigs); saveWorkspaces(); renderWorkspaceTabs(); out.textContent = r.direct ? 'Conexão direta aplicada.' : 'Proxy aplicado às quatro contas.';
+    btn.disabled = true;
+    const r = await window.pokeAPI.applyTabProxy(ws.id, cfg); if (!r.ok) { btn.disabled = false; out.textContent = r.error; return; }
+    proxyConfigs[ws.id] = cfg; const saved = await window.pokeAPI.saveTabProxies(proxyConfigs); if (!saved) { btn.disabled = false; out.textContent = 'O proxy foi aplicado, mas não foi possível salvar a configuração.'; return; } saveWorkspaces(); renderWorkspaceTabs();
+    btn.disabled = false; proxyOverlay.classList.remove('show');
+    await scriptNotice(r.direct ? 'Configurações salvas. Esta aba está usando a conexão direta.' : 'Configurações salvas e proxy aplicado às quatro contas da aba.');
   };
   setInterval(renderWorkspaceTabs, 15000);
 
