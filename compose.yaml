@@ -1,0 +1,19 @@
+services:
+  pokegrid:
+    build:
+      context: .
+    image: pokegrid:local
+    container_name: pokegrid
+    ports:
+      - "127.0.0.1:6080:6080"
+    environment:
+      SCREEN_WIDTH: "1600"
+      SCREEN_HEIGHT: "900"
+      SCREEN_DEPTH: "24"
+    volumes:
+      - pokegrid-data:/home/node/.config
+    shm_size: "1gb"
+    restart: unless-stopped
+
+volumes:
+  pokegrid-data:

@@ -56,6 +56,33 @@ bash iniciar.sh
 
 Pronto. Entre ou crie uma conta em cada painel e, em "Treinadores", salve o login. Da próxima vez ele entra sozinho.
 
+### Rodar com Docker
+
+Com o Docker Desktop (Windows/macOS) ou Docker Engine + Compose (Linux)
+instalado, abra um terminal nesta pasta e execute:
+
+```bash
+docker compose up --build -d
+```
+
+Depois, abra no navegador:
+
+```text
+http://localhost:6080/vnc.html?autoconnect=1&resize=scale
+```
+
+O primeiro build pode levar alguns minutos. Os logins e as configurações ficam
+guardados no volume `pokegrid-data`, sobrevivendo à recriação do contêiner.
+
+Para parar:
+
+```bash
+docker compose down
+```
+
+Para apagar também todos os dados persistidos, use `docker compose down -v`.
+Isso remove contas e configurações salvas.
+
 ## O que ele faz
 
 - Rode 2, 3 ou 4 contas, você escolhe quantos painéis abrir.

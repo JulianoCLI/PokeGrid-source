@@ -1,7 +1,20 @@
 node_modules/
 dist/
 *.zip
+*.tar.gz
 *.log
+
+# segredos e configuracoes locais
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+docker-compose.override.yml
+compose.override.yaml
 
 # dados locais do usuario (nunca versionar)
 accounts.enc

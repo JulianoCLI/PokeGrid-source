@@ -1,0 +1,17 @@
+.git
+.gitignore
+node_modules
+dist
+*.zip
+*.log
+accounts.enc
+accounts.enc.*
+dom-dump.txt
+Dockerfile*
+compose*.yaml
+README*.md
+TUTORIAL.md
+COMO USAR.txt
+iniciar.bat
+iniciar.sh
+Abrir PokeGrid.vbs
